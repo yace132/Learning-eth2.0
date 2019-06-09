@@ -380,8 +380,16 @@ We don't really process the voting logic in this step(that occurs in epoch proce
       return intDiv(getEpochStartSlot(epoch) + offset, intDiv(committeeCount, SLOTS_PER_EPOCH));
     }
     
->>SHARD_COUNT 1024
-
+>> SHARD_COUNT 1024
+>> Count committee of targetEpoch
+>> `offset` We are processing `offset` shard of target epoch
+>> 128 slot (2nd epoch)
+>> slot 128, slot 129, slot 130, slot 131
+>> 128,129,130 131,132,133 134,135,136 137,138,139 shard
+>> 238 + |-   (138 - start shard) / (committee/slot)   -|
+    11220 -- 10001
+    12345 -- 10002
+    10000
 > How may committees in epoch?
 
     export function getEpochCommitteeCount(state: BeaconState, epoch: Epoch): number {
@@ -416,13 +424,63 @@ We don't really process the voting logic in this step(that occurs in epoch proce
 >> We use all `ActiveValidator` for each epoch
 >> Note that, EpochCommitteeCount changes for each epoch
 >> `ActiveValidator` may changes? 
- 
+
+> compute how many shards can `epoch` process
+> 
     export function getShardDelta(state: BeaconState, epoch: Epoch): number {
       return Math.min(
         getEpochCommitteeCount(state, epoch),
         SHARD_COUNT - intDiv(SHARD_COUNT, SLOTS_PER_EPOCH),
       );
     }
->> ideal case: 64
->>  1 slot 1 shard, so 64 shards per epoch
+>> 1 shard 1 committee
+>> number of shards = number of committees in `epoch`
+>> But there is a max, 1024 - 64 
+
+> Use startShard of next epoch and each epoch's shardDelta to compute stardShard of some epoch
+
+    export function getEpochStartShard(state: BeaconState, epoch: Epoch): Shard {
+      const currentEpoch = getCurrentEpoch(state);
+      let checkEpoch = currentEpoch + 1;
+      assert(epoch <= checkEpoch);
+      let shard = (state.latestStartShard + getShardDelta(state, currentEpoch)) % SHARD_COUNT;
+      while (checkEpoch > epoch) {
+        checkEpoch -= 1;
+        shard = (shard + SHARD_COUNT - getShardDelta(state, checkEpoch)) % SHARD_COUNT;
+      }
+      return shard;
+    }
+
+>> We want to get what's the start shard of some epoch 
+>> However, # of shard of each epoch is not fixed
+>> We need to some computation for it 
+>> `shard = (state.latestStartShard + getShardDelta(state, currentEpoch)) % SHARD_COUNT`
+>>> `state.latestStartShard` is the 1st shard processed by latest epoch 
+>>> Because currentShard is started
+>>> `state.latestStartShard` is the start shard of current epoch
+>>>  So `shard` is the startShard of next epoch
+>>>  
+>> Here is a diagram of `getEpochStartShard()` logic :
+>>   
+    /**
+     *	let CE = currentEpoch, E = epoch
+     *	let d(e) = getShardDelta(state, e)
+     *	<  E  >	...	<CE -3>	<CE -2>	<CE -1>	< CE  >	<CE +1>
+     *	|-----|		|-----|	|-----|	|-----|	|-----|	|-----|
+     *	  d(E)  	d(CE-3)	d(CE-2)	d(CE-1)	 d(CE)	|d(CE+1)
+     *	|		|	|	|	|	|
+     *	|			|	|	|	\shard
+     *	|			|	|	\A = shard-d(CE)
+     *	|			\...	\B = s1-d(CE-1)
+     *	\s = stardShard(E+1)-d(E+1)
+     */
+     	
+
+
+
+
+
+
+
+
     
