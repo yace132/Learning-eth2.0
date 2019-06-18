@@ -46,8 +46,7 @@
 
 #### block/
 - index.ts
-
-
+>
     export default function processBlock(state: BeaconState, block: BeaconBlock): void {
     // Slot
     assert(block.slot === state.slot, "block root must equal state root");
@@ -97,7 +96,7 @@
         ...block,
         signature: EMPTY_SIGNATURE,
       };
->> "..." is [spread operator](https://basarat.gitbooks.io/typescript/docs/spread-operator.html) of typescript
+>> ( "..." is [spread operator](https://basarat.gitbooks.io/typescript/docs/spread-operator.html) of typescript )
 >> add EMPTY_SIGNATURE to block
 >> so it would be accepted by hashTreeRoot() function
 >
@@ -124,8 +123,7 @@
 >> signature is block.signature
 >> notice the validators for this block
 - randao.ts
-
-
+>
     export default function processRandao(state: BeaconState, block: BeaconBlock): void {}
 > in processRandao()
     
