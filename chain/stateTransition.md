@@ -85,9 +85,8 @@
 > 
     // Slot
     assert(block.slot === state.slot, "block root must equal state root");
->> The state is input of processBlock, so this is the previous state
->> But the block is the new block
->> So LHS should not be equal to RHS?
+>> The state has changed b/c processSlot()
+>> So new slot of new block is same to slot of state
 
 - proposerSignature.ts
 
@@ -216,7 +215,7 @@ We don't really process the voting logic in this step(that occurs in epoch proce
 >>> at least 4 slots
     
 >> `prcessAttestation` can't be too late
->>> We need to process in 1 epoch (may cross epoch?)
+>>> We need to process in 1 epoch ( may cross epoch? )
 >>> 
 
     assert((
@@ -230,10 +229,26 @@ We don't really process the voting logic in this step(that occurs in epoch proce
         state.previousJustifiedRoot.equals(data.sourceRoot) &&
         hashTreeRoot(state.previousCrosslinks[data.shard], Crosslink).equals(data.previousCrosslinkRoot)
       ));
->> what is crosslink?
+>> attestation consists of 3 parts: epoch, block, shard
+>> 1st condition we hope
+>>> for epoch, 
+>>> `state.currentJustifiedEpoch` -->  `currentEpoch`
+
+>>> for shard,
+>>> `state.currentCrosslinks[data.shard]` --> `data.crosslinkDataRoot`
+ 
+>> 2nd condition we hope ???
+
+> For phase 0, we simplify shard chain
+> 
+	assert(data.crosslinkDataRoot.equals(ZERO_HASH));
+
+>
+	  assert(verifyIndexedAttestation(state, convertToIndexed(state, attestation)));
+
 #### util/
 - seed.ts
-> choose seed for each epoch
+> Choose seed for each epoch
 >> 
     export function generateSeed(state: BeaconState, epoch: Epoch): bytes32 {
       return hash(Buffer.concat([
@@ -243,12 +258,12 @@ We don't really process the voting logic in this step(that occurs in epoch proce
       ]));
     }
 
-1. get the random number of last epoch(latest random number)
+1. get the random number of last epoch ( latest random number )
 >
     export function getRandaoMix(state: BeaconState, epoch: Epoch): bytes32 {
     return state.latestRandaoMixes[epoch % LATEST_RANDAO_MIXES_LENGTH];
     }
->> get random # from latest generated random #s recorded in block(state) 
+>> get random number from latest generated random numbers recorded in block ( state ) 
 >> 
 >> everyone can do it, just read blockchain data
 
@@ -271,17 +286,20 @@ We don't really process the voting logic in this step(that occurs in epoch proce
 4. hash(1,2,3)
 >
 >How random seed of this epoch?
->> Even randomMix and activate set repeat, different epoch has different seed.
+>> Even randaoMix and activate set repeat, different epoch has different seed.
 >> 
 >>  Even we predict the activate set of some future epoch E
->>  We can't know E's seed until E's last epoch ends.
->>> If we compute earlier, the randaoMix value is not the same after the E's last epoch, the earlier seed is different and invalid. 
+>>  We can't know E's seed until E's last slot ends.
+>>> If we compute earlier, the randaoMix value is not the same after the E's last slot, the earlier seed is different and invalid. 
+>>> Or the seed changes depends on when do we generate seed 
+>>> Or epoch seed changes for each slot
 
 >> differnt activate set produce diffrent seed (is this helpful?) 
 
 - misc.ts
-> get proposer of current slot
-    export function getBeaconProposerIndex(state: BeaconState): ValidatorIndex {}
+> Get proposer of current slot
+
+	export function getBeaconProposerIndex(state: BeaconState): ValidatorIndex {}
 >    
         let i = 0;
       while (true) {
@@ -372,24 +390,91 @@ We don't really process the voting logic in this step(that occurs in epoch proce
         return epoch * SLOTS_PER_EPOCH;
     }
 - crosslinkCommittee.ts
+>After shuffle `indexCount` cards ( indices of validators ), return the `index`-th card
+
+|                     | old deck              | new deck |
+|:-------------------:|:----------------------|----------|
+| i                   |   /-------------------|--->      |
+|                     |  \|                   |          |
+|                     |  \|                   |          |
+|`getShuffledIndex(i)`|  \\___some validator  |          |
+>( i=`index` in this table )
 >
-    export function getAttestationDataSlot(state: BeaconState, data: AttestationData): Slot {
-      const epoch = data.targetEpoch;
-      const committeeCount = getEpochCommitteeCount(state, epoch);
-      const offset = (data.shard + SHARD_COUNT - getEpochStartShard(state, epoch)) % SHARD_COUNT;
-      return intDiv(getEpochStartSlot(epoch) + offset, intDiv(committeeCount, SLOTS_PER_EPOCH));
-    }
-    
->> SHARD_COUNT 1024
->> Count committee of targetEpoch
->> `offset` We are processing `offset` shard of target epoch
->> 128 slot (2nd epoch)
->> slot 128, slot 129, slot 130, slot 131
->> 128,129,130 131,132,133 134,135,136 137,138,139 shard
->> 238 + |-   (138 - start shard) / (committee/slot)   -|
-    11220 -- 10001
-    12345 -- 10002
-    10000
+	export function getShuffledIndex(index: ValidatorIndex, indexCount: number, seed: bytes32): number 
+>>`ValidatorIndex`
+>>>`export type ValidatorIndex = number64;`
+>>>refer to [src/types/primitives.tx]()
+
+>>`indexCount` 
+>>> We shuffle all `indexCount` validators together ( no matter which committee )
+>>> This is a deck of `indexCount` cards
+
+	let permuted = index;
+	
+	//...
+	
+	return permuted;
+
+>> `permuted` is what we want
+>> 
+	  for (let i = 0; i < SHUFFLE_ROUND_COUNT; i++) {
+		const pivot = bytesToBN(
+		  hash(Buffer.concat([seed, intToBytes(i, 1)]))
+			.slice(0, 8)
+		).modn(indexCount);
+>> `pivot` is a blockcipher roundkey
+>> `pivot` help us choosing the "partner"
+
+>>  We use PRNG to get pivot of each round
+>>  We can view the code as : 
+>>  
+	// pivot = PRNG(seed,i)
+>> PRNG produce pivot for each round
+>> PRNG may generate pivots = 0,1, ... , `indexCount`-1
+>> `seed` of PRNG is `generateSeed(state, epoch)`
+>> that is, seed of current epoch ( at current slot )
+>> 	
+		const flip = (pivot - permuted) % indexCount;
+>> `flip` is the "partner" of `permuted` of i-th round
+>> 
+		const position = Math.max(permuted, flip);
+>> Notice that "partner" and max(permuted,"partner") are unique in this round
+>>
+		const source = hash(Buffer.concat([
+		  seed,
+		  intToBytes(i, 1),
+		  intToBytes(intDiv(position, 256), 4),
+		]));
+		const byte = source[intDiv(position % 256, 8)];
+		const bit = (byte >> (position % 8)) % 2;
+>>Rewrite the code as
+>>
+	bit = Fi(position)
+>> Fi is a function mapping `position` to a random single bit
+>> Fi or Fi,seed
+>> Fi is function decided by i and seed ( Why need seed?seed doesn't appear in "swap or not" paper  )
+>> 
+	permuted = bit ? flip : permuted;
+>>bit = 1, swap
+>>bit = 0, not swap
+>>
+
+>>Note
+>>>From function `getShuffledIndex(index, indexCount, seed)`
+>>>
+>>>It seems like we shuffle each card respectively
+>>>But we use the same `seed` of each `getShuffledIndex` call
+>>>
+>>>So pivot used in each round is same for each card
+>>>   
+>>>All `getShuffledIndex` calls consist the whole shuffle
+>>>
+>>>We can conclude that
+>>>1. 1 seed for 1 shuffle, no card wil repeat
+>>>2. different seed seems like different shuffle, same card may appear in multiple positions
+>>>3. seed use in PRNG and Fi
+>>>It means different shuffle has different shuffle process ( different PRNG and Fi )
+	  
 > How may committees in epoch?
 
     export function getEpochCommitteeCount(state: BeaconState, epoch: Epoch): number {
@@ -474,7 +559,168 @@ We don't really process the voting logic in this step(that occurs in epoch proce
      *	|			\...	\B = s1-d(CE-1)
      *	\s = stardShard(E+1)-d(E+1)
      */
-     	
+	 
+>> We know the committees of current and past epoch
+>> But we don't know committes of future
+>> So we can't know start shard of future epoch
+>> That is, we can't predict which shard will be processed in future epoch
+
+> Compute `data.shard` is processed in which slot ( depends on # of committees )
+>  
+    export function getAttestationDataSlot(state: BeaconState, data: AttestationData): Slot {
+      const epoch = data.targetEpoch;
+      const committeeCount = getEpochCommitteeCount(state, epoch);
+      const offset = (data.shard + SHARD_COUNT - getEpochStartShard(state, epoch)) % SHARD_COUNT;
+      return intDiv(getEpochStartSlot(epoch) + offset, intDiv(committeeCount, SLOTS_PER_EPOCH));
+    }
+    
+>> `SHARD_COUNT` 1024
+>> `offset` 
+>>>We are processing `offset` shard of target epoch
+
+>> the last line is wrong
+>>> correct: 
+`getEpochStartSlot(epoch) + intDiv(offset, intDiv(committeeCount, SLOTS_PER_EPOCH));`
+>> We are processing the `intDiv(offset, intDiv(committeeCount, SLOTS_PER_EPOCH))`-th slot of `targetEpoch`
+
+>> Note that
+>>> `data.shard` is some shard processed in `data.targetEpoch`
+
+> Shuffle deck `indices` by `seed`
+> Divide the deck in `count` groups ( from top to bottom )
+> Get the `index`-th group after shuffle 
+>
+	export function computeCommittee(
+	  indices: ValidatorIndex[],
+	  seed: bytes32,
+	  index: number,
+	  count: number
+	): ValidatorIndex[]
+>> The deck is activate validator indices
+>> 1 group of validator indices for 1 committee
+>> We want the `index`-th committee of this epoch
+
+>> Assume the size of committee is S
+>>> 0-th shard of this epoch: card 0, 1, 2, ... , S-1
+>>> 1 st shard of this epoch: card S, S+1, S+2, ... , 2S-1
+>>> 2 nd shard of this epoch: card 2S, 2S+1, 2S+2, ... , 3S-1
+>>
+	const start = intDiv(indices.length * index, count);
+  	const end = intDiv(indices.length * (index + 1), count);
+>> or
+>>
+	start = intDiv(indices.length * index, count)
+	      = index * intDiv(indices.length, count)
+>>`indices.length` = # of activate validators
+>>`intDiv(indices.length, count)` = # of members of committee
+>>`count` is the # of groups that we divide or committee count of this epoch
+>>
+	const end = intDiv(indices.length * (index + 1), count)
+>> or
+>> 	
+	end = intDiv(indices.length * (index + 1), count)
+	    = (index + 1) * intDiv( indices.length,count)
+>>
+	Array.from({length: end - start},
+    (_, i) => i + start)
+>>Construct array \[ start, start+1, ..., end-1 \]
+>>card start to card (end-1) is the `index`-th committee
+>>
+	.map((i) => indices[getShuffledIndex(i, indices.length, seed)])
+>> get the i-th card after shuffle
+>> `indices` is the deck before the shuffle
+>>see table of `getShuffledIndex()`
+
+>>Note
+>>>1. seed changes **every slot**
+>>>That is, we shuffle **all validators each slot** ( and pick some committees each slot )
+>>>Thus, **one may play committee member again in 1 epoch**
+ 
+>>>>>Consider counterexample, after some people played committee member
+
+>>>>>We exclude possibility that they play committee member again
+
+>>>>>So in last slots of the epcoh, we may guess the members of committee
+
+>>>>>This is not secure. So we need feature 1
+
+>>>2. shards of the same slot use the same seed
+>>>That means we shuffle once in 1 slot
+>>>And take many groups of cards for shards in that slot
+>>>Thus, **members of committees in the same slot must be different**
+
+> Get committee of (`epoch`, `shard`)
+> 
+	export function getCrosslinkCommittee(
+	  state: BeaconState,
+	  epoch: Epoch,
+	  shard: Shard
+	): ValidatorIndex[]
+	
+> 
+	return computeCommittee(
+		getActiveValidatorIndices(state, epoch),
+		generateSeed(state, epoch),
+		(shard + SHARD_COUNT - getEpochStartShard(state, epoch)) % SHARD_COUNT,
+		getEpochCommitteeCount(state, epoch)
+	);
+>> Shuffle deck of validator indices 
+>> Take 1 group of the cards
+>> 
+>>`getActiveValidatorIndices(state, epoch)`
+>>> which deck we shuffle
+>>> We shuffle indices of validators
+
+>> `generateSeed(state,epoch)`
+>>> We need key for shuffle 
+>>> Seed of `epoch` at current slot
+>>> generates shuffle key ( pivot ) of each round
+
+>> `(shard + SHARD_COUNT - getEpochStartShard(state,epoch)) % SHARD_COUNT`
+>>> We only need some cards in this deck
+>>> Validators are processing which shard of `epoch` 
+>>> start from 0, less than 1024
+
+>>	`getEpochCommitteeCount(state, epoch)`
+>>>	How many groups do we divide the deck?
+>>> 1 shard ( committee ) 1 group
+
+- attestation.ts
+> Returns the ith bit in bitfield
+> 
+	export function getBitfieldBit(bitfield: bytes, i: number): number {
+	  const bit = i % 8;
+	  const byte = intDiv(i,  8);
+	  return (bitfield[byte] >> bit) & 1;
+	}
+
+>> bitfield
+>> [ 7 6 5 4 3 2 1 0-th bit,
+>> 15 14 13 12 11 10 9 8-th bit,
+>>  ... ]
+
+
+> Check format of bitfield
+> 
+	export function verifyBitfield(bitfield: bytes, committeeSize: number): boolean {}
+>Check bitfield matches committee size
+>
+	  if (bitfield.length !== intDiv(committeeSize + 7, 8)) {
+		return false;
+	  }
+>> 1 validator 1 bit
+>> `committeeSize` = 1,2,3,4,5,6,7,8	--> 1 byte
+>> `committeeSize` = 9,10,11,12,13,14,15,16	--> 2 bytes
+>> `committeeSize` = 17,18,19,20,21,22,23,24	--> 3 bytes
+>>
+
+> Check `bitfield` is padded with zero bits only
+	  
+	  for (let i = committeeSize; i < bitfield.length * 8; i++) {
+		if (getBitfieldBit(bitfield, i) === 0b1) {
+		  return false;
+		}
+	  }
 
 
 
