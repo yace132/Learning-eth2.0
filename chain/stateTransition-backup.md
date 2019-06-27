@@ -1,10 +1,10 @@
-# chain/stateTransition/
+# stateTransition/
 
 
-# Learn ChainSafe's eth2.0
+# Study ChainSafe's eth2.0 implementation
 
 
-## Docs :memo:
+## Notes :memo:
 ### chain/stateTransition/   
 #### index.ts
 >state transition
@@ -168,7 +168,7 @@
 >
 > Also, when there is no such vote, count the block `eth1Data` as 1 vote, add it to `state.eth1DataVotes`
 > 
-We don't really process the voting logic in this step(that occurs in epoch processsing)
+We don't really process the voting logic in this step ( that occurs in epoch processsing )
 
 - proposerSlashings.ts
 > slash proposer who propose different headers of the same block
@@ -197,8 +197,7 @@ We don't really process the voting logic in this step(that occurs in epoch proce
     slashValidator(state, proposerSlashing.proposerIndex);
     
 - attestations.ts
-> some words
-> 
+> Check the format of attestation ( informations of eth2.0 )
     export function processAttestation(state: BeaconState, attestation: Attestation): void {}
 > 
   
@@ -227,7 +226,7 @@ We don't really process the voting logic in this step(that occurs in epoch proce
         state.previousJustifiedRoot.equals(data.sourceRoot) &&
         hashTreeRoot(state.previousCrosslinks[data.shard], Crosslink).equals(data.previousCrosslinkRoot)
       ));
->> attestation consists of 3 parts: epoch, block, shard
+>> Attestation consists of 3 parts: epoch, block and shard
 >> 1st condition we hope
 >>> for epoch, 
 >>> `state.currentJustifiedEpoch` -->  `currentEpoch`
@@ -243,7 +242,119 @@ We don't really process the voting logic in this step(that occurs in epoch proce
 
 >
 	  assert(verifyIndexedAttestation(state, convertToIndexed(state, attestation)));
+>> `convertToIndexed()` changes the format of attestation
+>> Replace bitfields with validator indices
+>> 
+>> `verifyIndexedAttestation()` extracts validators' pubkeys by validator indices and verify bls signature of attestation
+>> 
+	const pendingAttestation: PendingAttestation = {
+		data,
+		aggregationBitfield: attestation.aggregationBitfield,
+		inclusionDelay: state.slot - attestationSlot,
+		proposerIndex: getBeaconProposerIndex(state),
+	  };
+	  
+	if (data.targetEpoch === currentEpoch) {
+		state.currentEpochAttestations.push(pendingAttestation);
+	  } else {
+		state.previousEpochAttestations.push(pendingAttestation);
+	  }
+>> Cache attestations of epoch
+>> Remove custody bit informations and signature
+>> Add inclusionDelay and current beacon proposer
 
+> Check formats of attestations of new block
+>
+	export default function processAttestations(state: BeaconState, block: BeaconBlock): void {
+	  assert(block.body.attestations.length <= MAX_ATTESTATIONS);
+	  for (const attestation of block.body.attestations) {
+		processAttestation(state, attestation);
+	  }
+>> 1 block has many attestations, process them
+
+- deposits.ts
+>
+	export function processDeposit(state: BeaconState, deposit: Deposit): void
+>>
+	assert(verifyMerkleBranch(
+		hash(serialize(deposit.data, DepositData)), 
+		deposit.proof,
+		DEPOSIT_CONTRACT_TREE_DEPTH,
+		deposit.index,
+		state.latestEth1Data.depositRoot,
+	  ));
+>> Check `deposit` is in merkle tree
+>> We have recorded new depositRoot in epoch ( slot which is start of the epoch )  
+	
+	assert(deposit.index === state.depositIndex);
+  	state.depositIndex += 1;
+>> Deposits must be processed in order
+>>
+	const pubkey = deposit.data.pubkey;
+	  const amount = deposit.data.amount;
+	  const validatorIndex = state.validatorRegistry.findIndex((v) => v.pubkey.equals(pubkey));
+	  if (validatorIndex === -1) {
+		if (!bls.verify(
+		  pubkey,
+		  signingRoot(deposit.data, DepositData),
+		  deposit.data.signature,
+		  getDomain(state, Domain.DEPOSIT),
+		)) {
+		  return state;
+		}
+		const validator: Validator = {
+		  pubkey,
+		  withdrawalCredentials: deposit.data.withdrawalCredentials,
+		  activationEligibilityEpoch: FAR_FUTURE_EPOCH,
+		  activationEpoch: FAR_FUTURE_EPOCH,
+		  exitEpoch: FAR_FUTURE_EPOCH,
+		  withdrawableEpoch: FAR_FUTURE_EPOCH,
+		  slashed: false,
+		  effectiveBalance: bnMin(
+			amount.sub(amount.mod(EFFECTIVE_BALANCE_INCREMENT)),
+			MAX_EFFECTIVE_BALANCE
+		  ),
+		};
+		state.validatorRegistry.push(validator);
+		state.balances.push(amount);
+>>or
+>>
+	if (validatorIndex === -1) {
+		if (!bls.verify(//...)) {
+		  return state;
+		}
+		const validator: Validator = {//...	};
+		state.validatorRegistry.push(validator);
+		state.balances.push(amount);
+		
+>> New validator, check signature and add he
+>> `FAR_FUTURE_EPOCH` Infinity
+>> `effectiveBalance`
+>>>`EFFECTIVE_BALANCE_INCREMENT`=1 eth
+>>>`MAX_EFFECTIVE_BALANCE`=32 eth
+>>>`amount.sub(amount.mod(EFFECTIVE_BALANCE_INCREMENT))`
+>>>>ignore fraction
+
+>>>`bnMin()`
+>>>>Balance can't exceed `MAX_EFFECTIVE_BALANCE`
+
+>>
+	state.validatorRegistry.push(validator);
+	state.balances.push(amount);
+>>Add validator, sepreate amount
+>
+	else {
+		increaseBalance(state, validatorIndex, amount);
+	  }
+>>If the validator has deposited, increase his balance
+>>
+	export default function processDeposits(state: BeaconState, block: BeaconBlock): void {
+	  // Verify that outstanding deposits are processed up to the maximum number of deposits
+	  assert(block.body.deposits.length ===
+		Math.min(MAX_DEPOSITS, state.latestEth1Data.depositCount - state.depositIndex));
+	  for (const deposit of block.body.deposits) {
+		processDeposit(state, deposit);
+	  }
 #### util/
 - seed.ts
 > Choose seed for each epoch
@@ -684,7 +795,29 @@ We don't really process the voting logic in this step(that occurs in epoch proce
 >>> 1 shard ( committee ) 1 group
 
 - attestation.ts
-> Returns the ith bit in bitfield
+>
+	export function getAttestingIndices(
+	  state: BeaconState,
+	  attestationData: AttestationData,
+	  bitfield: bytes
+	): ValidatorIndex[]
+>>
+	const crosslinkCommittee =
+		getCrosslinkCommittee(state, attestationData.targetEpoch, attestationData.shard);
+>> Get indices of committee of `attestationData.shard`,`attestationData.targetEpoch`
+>> 
+	assert(verifyBitfield(bitfield, crosslinkCommittee.length));
+>> Check that `bitfield`'s format is consitent with `crosslinkCommittee`
+>>
+	return crosslinkCommittee
+		.filter((_, i) =>  getBitfieldBit(bitfield, i) === 0b1)
+>> Get indices of who vote 1
+>> "0b" is prefix of js binary representation
+>> 
+	.sort();
+>> sort by deafult order, Unicode
+
+> Returns the i-th bit of `bitfield`
 > 
 	export function getBitfieldBit(bitfield: bytes, i: number): number {
 	  const bit = i % 8;
@@ -710,19 +843,122 @@ We don't really process the voting logic in this step(that occurs in epoch proce
 >> `committeeSize` = 1,2,3,4,5,6,7,8	--> 1 byte
 >> `committeeSize` = 9,10,11,12,13,14,15,16	--> 2 bytes
 >> `committeeSize` = 17,18,19,20,21,22,23,24	--> 3 bytes
->>
-
-> Check `bitfield` is padded with zero bits only
-	  
+>>	  
 	  for (let i = committeeSize; i < bitfield.length * 8; i++) {
 		if (getBitfieldBit(bitfield, i) === 0b1) {
 		  return false;
 		}
 	  }
+>> Check `bitfield` is padded with zero bits only
+>	  
+	export function convertToIndexed(state: BeaconState, attestation: Attestation): IndexedAttestation
+>>
+	const attestingIndices =
+    getAttestingIndices(state, attestation.data, attestation.aggregationBitfield);
+>> Who attest in committee of `atteatation.data`
+>>
+	const custodyBit1Indices =
+    getAttestingIndices(state, attestation.data, attestation.custodyBitfield);
+>>
+	const custodyBit0Indices = attestingIndices.filter((i) => custodyBit1Indices.includes(i));
+>> Get who attests but has custodoy bit 1
+>> 
+	return {
+		custodyBit0Indices,
+		custodyBit1Indices,
+		data: attestation.data,
+		signature: attestation.signature,
+	  }; 
+>
+	export function verifyIndexedAttestation(
+	  state: BeaconState,
+	  indexedAttestation: IndexedAttestation
+	): bool
+>>
+	const custodyBit0Indices = indexedAttestation.custodyBit0Indices;
+	  const custodyBit1Indices = indexedAttestation.custodyBit1Indices;
+>>
 
+	  const custodyBit0IndicesSet = new Set(custodyBit0Indices);
+	  const duplicates = new Set(
+		custodyBit1Indices.filter((i) => custodyBit0IndicesSet.has(i))
+	  );
+	  assert(duplicates.size === 0);
+>>Ensure no duplicate indices across bit0 and bit1
+>>
+	// TO BE REMOVED IN PHASE 1
+	  if (custodyBit0Indices.length > 0) {
+		return false;
+	  }
+>>
+	const totalAttestingIndices = custodyBit0Indices.length + custodyBit1Indices.length;
+	  if (!(1 <= totalAttestingIndices && totalAttestingIndices <= MAX_INDICES_PER_ATTESTATION)) {
+		return false;
+	  }
+>>Check length
+>>
+	const sortedCustodyBit0Indices = custodyBit0Indices.slice().sort();
+	  if (!custodyBit0Indices.every((index, i) => index === sortedCustodyBit0Indices[i])) {
+		return false;
+	  }
 
-
-
+	  const sortedCustodyBit1Indices = custodyBit1Indices.slice().sort();
+	  if (!custodyBit1Indices.every((index, i) => index === sortedCustodyBit1Indices[i])) {
+		return false;
+	  }
+>> Use `sort()` to shallow copy indices, sort again and compare with input indices
+>> 
+	return bls.verifyMultiple(
+		[
+		  bls.aggregatePubkeys(sortedCustodyBit0Indices.map((i) => state.validatorRegistry[i].pubkey)),
+		  bls.aggregatePubkeys(sortedCustodyBit1Indices.map((i) => state.validatorRegistry[i].pubkey)),
+		], [
+		  hashTreeRoot({
+			data: indexedAttestation.data,
+			custodyBit: 0b0,
+		  }, AttestationDataAndCustodyBit),
+		  hashTreeRoot({
+			data: indexedAttestation.data,
+			custodyBit: 0b1,
+		  }, AttestationDataAndCustodyBit),
+		],
+		indexedAttestation.signature,
+		getDomain(state, Domain.ATTESTATION, slotToEpoch(indexedAttestation.data.targetEpoch)),
+	  );
+>>
+	bls.verifyMultiple(
+		[pubkeys],
+		[message hashes],
+		signature,
+		domain
+	)
+>>	Use BLS scheme, even multiple people with different messages, we can "add" all signautes
+>>	The "signatue sum" can still be verified
+>>	The verification process is different with normal verification
+>>	So we need new function `bls.verifyMultiple()`
+>>	( We can also apply BLS scheme to another case -- all people sign the same message ) 
+>>
+	[
+	  bls.aggregatePubkeys(sortedCustodyBit0Indices.map((i) => state.validatorRegistry[i].pubkey)),
+	  bls.aggregatePubkeys(sortedCustodyBit1Indices.map((i) => state.validatorRegistry[i].pubkey)),
+	]
+>> `map()` collects public keys
+>> `aggeratePubkeys()` aggergates public key array 
+>>
+	[
+		  hashTreeRoot({
+			data: indexedAttestation.data,
+			custodyBit: 0b0,
+		  }, AttestationDataAndCustodyBit),
+		  hashTreeRoot({
+			data: indexedAttestation.data,
+			custodyBit: 0b1,
+		  }, AttestationDataAndCustodyBit),
+		]
+>> validtors sign `indexedAttestation.data` with different custodybit
+>> 
+	indexedAttestation.signature
+>> 2 types signature adds together
 
 
 

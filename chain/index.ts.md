@@ -1,4 +1,4 @@
-# chain/index.ts
+# index.ts
 # Learn ChainSafe's eth2.0
 
 

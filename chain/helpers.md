@@ -1,4 +1,4 @@
-### chain/helpers/   
+### helpers/   
 - stateTransitionHelpers.ts
 >
     export function hash(value: bytes): bytes32 {
