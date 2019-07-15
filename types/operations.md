@@ -1,22 +1,10 @@
-# types
-
-
-# Study ChainSafe's eth2.0 implementation
-
-
-## Notes :memo:
-### types/   
 #### operations.ts
 >attestation
 >
 	export interface Attestation {
-	  // Attester participation bitfield
 	  aggregationBitfield: bytes;
-	  // Attestation data
 	  data: AttestationData;
-	  // Proof of custody bitfield
 	  custodyBitfield: bytes;
-	  // BLS aggregate signature
 	  signature: BLSSignature;
 	}
 >>attestation: new eth2.0 chain data with signatures 

@@ -22,3 +22,8 @@
     export function getEpochStartSlot(epoch: Epoch): Slot{
         return epoch * SLOTS_PER_EPOCH;
     }
+>
+	export function getDelayedActivationExitEpoch(epoch: Epoch): Epoch {
+	  return epoch + 1 + ACTIVATION_EXIT_DELAY;
+	}
+>> delay `ACTIVATION_EXIT_DELAY`=4 epochs then activate or exit 
