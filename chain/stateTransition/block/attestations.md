@@ -1,5 +1,6 @@
 #### attestations.ts
 > Check the format of attestation ( informations of eth2.0 )
+> 
     export function processAttestation(state: BeaconState, attestation: Attestation): void {}
 > 
   

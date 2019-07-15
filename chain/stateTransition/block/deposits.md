@@ -54,7 +54,8 @@
 		state.balances.push(amount);
 		
 >> New validator, check signature and add he
->> `FAR_FUTURE_EPOCH` Infinity
+>>Initialize all critical time
+>> They are `FAR_FUTURE_EPOCH`, Infinity
 >> `effectiveBalance`
 >>>`EFFECTIVE_BALANCE_INCREMENT`=1 eth
 >>>`MAX_EFFECTIVE_BALANCE`=32 eth
@@ -72,7 +73,9 @@
 	else {
 		increaseBalance(state, validatorIndex, amount);
 	  }
->>If the validator has deposited, increase his balance
+>>If the validator has deposited, increase his balance by amount
+>>Fresh validator can't owns much than 32 eth, but we don't check balance in `increaseBalance()` 
+>>after `increaseBalance()` may exceed 32 eth (Is this the property we want? )
 
 >>Notice that, we don't process deposit logic or record any deposit on eth 1.0
 >>eth 1.0 only has a single contract recorded information of deposit root
